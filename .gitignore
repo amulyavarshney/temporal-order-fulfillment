@@ -111,6 +111,12 @@ $RECYCLE.BIN/
 # Temporal specific
 # ===========================================
 
+# Node / UI
+node_modules/
+ui/dist/
+ui/.vite/
+
+# Local H2 data
 .data/
 
 # Docker related (if using Docker for Temporal)

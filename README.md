@@ -2,18 +2,21 @@
 
 Multi-module Java 21 platform that orchestrates e-commerce order fulfillment with **Temporal**, a **Spring Boot REST API**, **JPA persistence**, saga compensations, and human approval for high-value orders.
 
+**Live sample UI:** [amulyavarshney.github.io/temporal-order-fulfillment](https://amulyavarshney.github.io/temporal-order-fulfillment/)
+
 ## Architecture
 
 ```
-Client → order-api (REST) → Temporal → order-worker
-                              ↓
-                     Payment / Inventory / Delivery services
-                              ↓
-                         PostgreSQL (or H2 locally)
+Browser UI → order-api (REST) → Temporal → order-worker
+                                    ↓
+                       Payment / Inventory / Delivery services
+                                    ↓
+                               PostgreSQL (or H2 locally)
 ```
 
 | Module | Purpose |
 |--------|---------|
+| `ui` | Sample React UI (GitHub Pages + local Vite) |
 | `order-common` | Models, DTOs, exceptions, service interfaces, Temporal config |
 | `order-services` | JPA entities + Payment / Inventory / Delivery implementations |
 | `order-workflows` | Temporal workflow + activities (approval, saga, queries) |
@@ -29,10 +32,20 @@ Client → order-api (REST) → Temporal → order-worker
 5. Deliver order
 6. On failure after payment/inventory: saga compensations (`refundPayment`, `releaseInventory`)
 
+## Sample UI
+
+The UI ships with a **Demo** mode that simulates the Temporal workflow entirely in the browser (works on GitHub Pages with no backend). Switch to **Live API** and point at `http://localhost:8080` when the Java stack is running.
+
+```bash
+make ui          # http://localhost:5173/temporal-order-fulfillment/
+make ui-build    # production build into ui/dist
+```
+
 ## Prerequisites
 
 - Java 21+
 - Maven 3.9+
+- Node.js 20+ (for the UI)
 - Docker (for Temporal + optional full stack)
 
 ## Quick start (Docker)
@@ -60,8 +73,8 @@ make worker
 # Terminal C – API
 make api
 
-# Submit an order
-make demo
+# Terminal D – UI
+make ui
 ```
 
 Local API/worker share a file-based H2 database under `.data/` (auto-server mode). For Docker Compose, both use PostgreSQL.
@@ -123,7 +136,7 @@ Item names ending in `@@@` are treated as invalid inventory (demo failure path) 
 make test
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs `mvn verify` on Java 21 with JaCoCo reports.
+GitHub Actions runs Java `mvn verify` and deploys the UI to GitHub Pages on pushes to `main`.
 
 ## Build artifacts
 

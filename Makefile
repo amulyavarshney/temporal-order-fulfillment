@@ -1,6 +1,6 @@
-# Temporal Order Fulfillment Platform Makefile
+# Temporal Order Fulfillment Application Makefile
 
-.PHONY: help build clean test package worker api up down logs demo demo-approve java-version
+.PHONY: help build clean test package worker api up down logs demo demo-approve java-version ui ui-build ui-preview
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -10,7 +10,7 @@ build: ## Compile all modules
 
 clean: ## Clean build artifacts
 	mvn -q clean
-	rm -rf .data
+	rm -rf .data ui/dist
 
 test: ## Run unit and workflow tests
 	mvn -q test
@@ -23,6 +23,15 @@ worker: package ## Run the Temporal worker locally
 
 api: package ## Run the REST API locally
 	java -jar order-api/target/order-api-1.0.0.jar
+
+ui: ## Run the sample UI (Vite dev server)
+	cd ui && npm install && npm run dev
+
+ui-build: ## Build the sample UI for GitHub Pages
+	cd ui && npm ci && npm run build
+
+ui-preview: ui-build ## Preview the production UI build locally
+	cd ui && npm run preview
 
 up: ## Start full stack with Docker Compose
 	docker compose up --build -d
