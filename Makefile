@@ -29,6 +29,7 @@ ui: ## Run the sample UI (Vite dev server)
 
 ui-build: ## Build the sample UI for GitHub Pages
 	cd ui && npm ci && npm run build
+	rm -rf docs && mkdir -p docs && cp -R ui/dist/. docs/ && cp docs/index.html docs/404.html && touch docs/.nojekyll
 
 ui-preview: ui-build ## Preview the production UI build locally
 	cd ui && npm run preview
