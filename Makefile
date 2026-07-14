@@ -1,120 +1,64 @@
-# Temporal Order Fulfillment Application Makefile
-# Author: Generated for Temporal Order Fulfillment Application
-# Description: Build, test, and run the Temporal order fulfillment application
+# Temporal Order Fulfillment Platform Makefile
 
-.PHONY: help build clean compile test package worker run install deps temporal-up temporal-down logs format
+.PHONY: help build clean test package worker api up down logs demo demo-approve java-version
 
-# Default target
-help: ## Show this help message
-	@echo "Temporal Order Fulfillment Application"
-	@echo "====================================="
-	@echo "Available targets:"
-	@echo ""
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+help: ## Show available targets
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-# Build and compilation targets
-deps: ## Install dependencies
-	@echo "Installing dependencies..."
-	@mvn dependency:resolve -q
-
-compile: ## Compile the application
-	@echo "Compiling application..."
-	@mvn compile -q -Dorg.slf4j.simpleLogger.defaultLogLevel=warn
-
-build: compile ## Build the application (compile + resources)
-	@echo "Building application..."
-	@mvn compile resources:resources -q -Dorg.slf4j.simpleLogger.defaultLogLevel=warn
-
-test: ## Run tests
-	@echo "Running tests..."
-	@mvn test -Dorg.slf4j.simpleLogger.defaultLogLevel=info
-
-package: ## Package the application into JAR
-	@echo "Packaging application..."
-	@mvn package -q -Dorg.slf4j.simpleLogger.defaultLogLevel=warn
-
-install: ## Install the package to local repository
-	@echo "Installing to local repository..."
-	@mvn clean install -q -Dorg.slf4j.simpleLogger.defaultLogLevel=warn
+build: ## Compile all modules
+	mvn -q -DskipTests compile
 
 clean: ## Clean build artifacts
-	@echo "Cleaning build artifacts..."
-	@mvn clean -q
+	mvn -q clean
+	rm -rf .data
 
-# Application execution targets
-worker: build ## Start the Temporal worker
-	@echo "Starting Temporal worker..."
-	@mvn exec:java -Dexec.mainClass="orderfulfillapp.OrderFulfillWorker" -Dorg.slf4j.simpleLogger.defaultLogLevel=warn
+test: ## Run unit and workflow tests
+	mvn -q test
 
-run: build ## Run the order fulfillment application
-	@echo "Running order fulfillment application..."
-	@mvn exec:java -Dexec.mainClass="orderfulfillapp.OrderFulfillApp" -Dorg.slf4j.simpleLogger.defaultLogLevel=warn
+package: ## Package executable Spring Boot jars
+	mvn -q -DskipTests package
 
-run-with-args: build ## Run with custom arguments (use ARGS="--numOrders 5 --invalidPercentage 10")
-	@echo "Running with arguments: $(ARGS)"
-	@mvn exec:java -Dexec.mainClass="orderfulfillapp.OrderFulfillApp" -Dexec.args="$(ARGS)" -Dorg.slf4j.simpleLogger.defaultLogLevel=warn
+worker: package ## Run the Temporal worker locally
+	java -jar order-worker/target/order-worker-1.0.0.jar
 
-# Temporal server management (requires Docker)
-temporal-up: ## Start Temporal server (requires Docker)
-	@echo "Starting Temporal server..."
-	@if command -v docker >/dev/null 2>&1; then \
-		docker run --rm -d -p 7233:7233 -p 8233:8233 --name temporal-server temporalio/auto-setup:latest; \
-		echo "Temporal server started at http://localhost:8233"; \
-		echo "gRPC endpoint: localhost:7233"; \
-	else \
-		echo "Docker not found. Please install Docker or start Temporal server manually."; \
-		echo "See: https://docs.temporal.io/dev-guide/introduction#set-up-a-local-temporal-service"; \
-	fi
+api: package ## Run the REST API locally
+	java -jar order-api/target/order-api-1.0.0.jar
 
-temporal-down: ## Stop Temporal server
-	@echo "Stopping Temporal server..."
-	@if command -v docker >/dev/null 2>&1; then \
-		docker stop temporal-server || true; \
-	else \
-		echo "Docker not found. Please stop Temporal server manually."; \
-	fi
+up: ## Start full stack with Docker Compose
+	docker compose up --build -d
+	@echo "API:        http://localhost:8080"
+	@echo "Worker:     http://localhost:8081/actuator/health"
+	@echo "Temporal UI:http://localhost:8233"
 
-# Development and maintenance targets
-format: ## Format Java code (requires google-java-format)
-	@echo "Formatting Java code..."
-	@if command -v google-java-format >/dev/null 2>&1; then \
-		find src -name "*.java" -exec google-java-format --replace {} \; ; \
-	else \
-		echo "google-java-format not found. Skipping formatting."; \
-		echo "Install: https://github.com/google/google-java-format"; \
-	fi
+down: ## Stop Docker Compose stack
+	docker compose down
 
-logs: ## Show recent logs (if using file logging)
-	@if [ -f "logs/application.log" ]; then \
-		tail -f logs/application.log; \
-	else \
-		echo "No log file found. Logs are printed to console."; \
-	fi
+logs: ## Tail compose logs
+	docker compose logs -f
 
-check-deps: ## Check for dependency updates
-	@echo "Checking for dependency updates..."
-	@mvn versions:display-dependency-updates
+demo: ## Submit a sample low-value order via API
+	@curl -s -X POST http://localhost:8080/api/orders \
+	  -H 'Content-Type: application/json' \
+	  -d '{"order":{"items":[{"itemName":"Pima Cotton T-Shirt","itemPrice":49.99,"quantity":2}],"payment":{"creditCard":{"number":"4111111111111111","expiration":"12/28"}}}}' | tee /tmp/order-demo.json
+	@echo
+	@ORDER_ID=$$(python3 -c "import json; print(json.load(open('/tmp/order-demo.json'))['orderId'])"); \
+	  echo "Polling $$ORDER_ID"; \
+	  sleep 2; \
+	  curl -s http://localhost:8080/api/orders/$$ORDER_ID; echo
 
-# Quality and security targets
-security-check: ## Run security vulnerability check
-	@echo "Running security vulnerability check..."
-	@mvn org.owasp:dependency-check-maven:check
+demo-approve: ## Submit a high-value order and approve it
+	@curl -s -X POST http://localhost:8080/api/orders \
+	  -H 'Content-Type: application/json' \
+	  -d '{"order":{"items":[{"itemName":"Wool Suit","itemPrice":599.99,"quantity":20}],"payment":{"creditCard":{"number":"4111111111111111","expiration":"12/28"}}}}' | tee /tmp/order-hi.json
+	@echo
+	@ORDER_ID=$$(python3 -c "import json; print(json.load(open('/tmp/order-hi.json'))['orderId'])"); \
+	  sleep 1; \
+	  curl -s -X POST http://localhost:8080/api/orders/$$ORDER_ID/approve; echo; \
+	  sleep 2; \
+	  curl -s http://localhost:8080/api/orders/$$ORDER_ID; echo
 
-verify: test ## Run all verification (tests + checks)
-	@echo "Running verification..."
-	@mvn verify -Dorg.slf4j.simpleLogger.defaultLogLevel=info
-
-# Quick start targets
-quick-start: temporal-up worker ## Quick start: Start Temporal + Worker
-
-demo: build ## Run a demo with sample orders
-	@echo "Running demo with sample orders..."
-	@mvn exec:java -Dexec.mainClass="orderfulfillapp.OrderFulfillApp" -Dexec.args="--numOrders 3 --invalidPercentage 0" -Dorg.slf4j.simpleLogger.defaultLogLevel=info
-
-# Java version check
-java-version: ## Check Java version
-	@echo "Java version:"
+java-version: ## Show Java and Maven versions
 	@java -version
-	@echo ""
-	@echo "Maven version:"
 	@mvn -version
+
+verify: test ## Alias for test

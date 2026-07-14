@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1
+FROM maven:3.9.9-eclipse-temurin-21 AS build
+WORKDIR /workspace
+COPY pom.xml .
+COPY order-common/pom.xml order-common/pom.xml
+COPY order-services/pom.xml order-services/pom.xml
+COPY order-workflows/pom.xml order-workflows/pom.xml
+COPY order-worker/pom.xml order-worker/pom.xml
+COPY order-api/pom.xml order-api/pom.xml
+RUN mvn -q -pl order-api -am dependency:go-offline || true
+COPY . .
+RUN mvn -q -pl order-api -am -DskipTests package
+
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+COPY --from=build /workspace/order-api/target/order-api-1.0.0.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]

@@ -1,331 +1,138 @@
-# Temporal Order Fulfillment Application
+# Temporal Order Fulfillment Platform
 
-A comprehensive Java application demonstrating **Temporal workflow orchestration** for e-commerce order fulfillment processes. This application showcases best practices for building resilient, scalable microservices using the Temporal workflow engine.
+Multi-module Java 21 platform that orchestrates e-commerce order fulfillment with **Temporal**, a **Spring Boot REST API**, **JPA persistence**, saga compensations, and human approval for high-value orders.
 
-## 🏗️ Architecture Overview
-
-This application implements a typical e-commerce order fulfillment workflow with the following components:
-
-- **Temporal Workflows**: Orchestrate the order fulfillment process
-- **Activities**: Handle individual business operations (payment, inventory, delivery)
-- **Models**: Define data structures for orders, payments, and inventory
-- **API Layer**: Interface with external services (payment gateways, inventory systems)
-
-### Workflow Process
+## Architecture
 
 ```
-Order Received → Payment Processing → Inventory Reservation → Order Delivery → Completion
+Client → order-api (REST) → Temporal → order-worker
+                              ↓
+                     Payment / Inventory / Delivery services
+                              ↓
+                         PostgreSQL (or H2 locally)
 ```
 
-## 🚀 Quick Start
+| Module | Purpose |
+|--------|---------|
+| `order-common` | Models, DTOs, exceptions, service interfaces, Temporal config |
+| `order-services` | JPA entities + Payment / Inventory / Delivery implementations |
+| `order-workflows` | Temporal workflow + activities (approval, saga, queries) |
+| `order-worker` | Spring Boot worker process |
+| `order-api` | REST API + workflow client |
 
-### Prerequisites
+### Workflow
 
-- **Java 21+** (configured for Java 24 in pom.xml)
-- **Maven 3.6+**
-- **Docker** (optional, for local Temporal server)
+1. Validate order
+2. If total > `$10,000` (configurable), wait for `approve` / `reject` signal
+3. Process payment
+4. Reserve inventory (decrements stock)
+5. Deliver order
+6. On failure after payment/inventory: saga compensations (`refundPayment`, `releaseInventory`)
 
-### 1. Clone and Build
+## Prerequisites
+
+- Java 21+
+- Maven 3.9+
+- Docker (for Temporal + optional full stack)
+
+## Quick start (Docker)
 
 ```bash
-git clone <repository-url>
-cd Temporal-Order-Fulfillment-Application
-make build
+make up
+make demo
+make demo-approve
 ```
 
-### 2. Start Temporal Server
+- API: http://localhost:8080
+- Worker health: http://localhost:8081/actuator/health
+- Temporal UI: http://localhost:8233
+- Prometheus metrics: `/actuator/prometheus` on API and worker
 
-**Option A: Using Docker (Recommended)**
+## Local development
+
 ```bash
-make temporal-up
-```
+# Terminal A – Temporal
+docker run --rm -p 7233:7233 -p 8233:8233 --name temporal-server temporalio/auto-setup:1.25.2
 
-**Option B: Manual Installation**
-```bash
-# Install Temporal CLI
-curl -sSf https://temporal.download/cli.sh | sh
-
-# Start Temporal server
-temporal server start-dev
-```
-
-### 3. Run the Application
-
-**Terminal 1: Start the Worker**
-```bash
+# Terminal B – Worker
 make worker
+
+# Terminal C – API
+make api
+
+# Submit an order
+make demo
 ```
 
-**Terminal 2: Process Orders**
-```bash
-make run
-```
+Local API/worker share a file-based H2 database under `.data/` (auto-server mode). For Docker Compose, both use PostgreSQL.
 
-## 📋 Available Commands
+## REST API
 
-Run `make help` to see all available commands:
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/orders` | Start fulfillment workflow |
+| `GET` | `/api/orders/{orderId}` | Query workflow status |
+| `POST` | `/api/orders/{orderId}/approve` | Approve high-value order |
+| `POST` | `/api/orders/{orderId}/reject?reason=` | Reject high-value order |
+| `GET` | `/api/inventory` | List stock levels |
 
-```bash
-make help              # Show all available commands
-make build             # Build the application
-make test              # Run tests
-make worker            # Start Temporal worker
-make run               # Process sample orders
-make demo              # Run demo with multiple orders
-make temporal-up       # Start Temporal server
-make temporal-down     # Stop Temporal server
-```
-
-## 🛠️ Development
-
-### Project Structure
-
-```
-src/
-├── main/java/orderfulfillapp/
-│   ├── activities/              # Business logic activities
-│   │   ├── OrderFulfillActivities.java
-│   │   └── OrderFulfillActivitiesImpl.java
-│   ├── api/                     # External API interfaces
-│   │   └── InventoryApi.java
-│   ├── exception/               # Custom exceptions
-│   │   └── CreditCardExpiredException.java
-│   ├── model/                   # Data models
-│   │   ├── CreditCard.java
-│   │   ├── Order.java
-│   │   ├── OrderItem.java
-│   │   ├── Payment.java
-│   │   └── StockItem.java
-│   ├── starter/                 # Order generation utilities
-│   │   └── OrderStarter.java
-│   ├── workflows/               # Temporal workflows
-│   │   ├── OrderFulfillWorkflow.java
-│   │   └── OrderFulfillWorkflowImpl.java
-│   ├── OrderFulfillApp.java     # Main application
-│   ├── OrderFulfillWorker.java  # Temporal worker
-│   └── Shared.java              # Shared constants
-├── main/resources/
-│   ├── data/                    # Test data
-│   │   ├── stock_database.json
-│   │   └── test_orders_short_valid.json
-│   └── logback.xml              # Logging configuration
-└── test/java/                   # Unit tests
-    └── orderfulfillapp/
-        └── OrderFulfillWorkflowTest.java
-```
-
-### Running Tests
+### Example request
 
 ```bash
-# Run all tests
+curl -X POST http://localhost:8080/api/orders \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "order": {
+      "items": [
+        {"itemName": "Pima Cotton T-Shirt", "itemPrice": 49.99, "quantity": 2}
+      ],
+      "payment": {
+        "creditCard": {"number": "4111111111111111", "expiration": "12/28"}
+      }
+    }
+  }'
+```
+
+Use credit card expiration `12/23` to simulate a non-retryable payment failure.
+
+Item names ending in `@@@` are treated as invalid inventory (demo failure path) — they will not match stock rows and trigger compensation after payment.
+
+## Configuration (environment)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal gRPC target |
+| `TEMPORAL_NAMESPACE` | `default` | Temporal namespace |
+| `TEMPORAL_TASK_QUEUE` | `OrderFulfillTaskQueue` | Task queue name |
+| `APPROVAL_THRESHOLD` | `10000` | Orders above this require approval |
+| `SPRING_DATASOURCE_URL` | file H2 under `.data/` | JDBC URL |
+| `SPRING_DATASOURCE_USERNAME` | `sa` | DB user |
+| `SPRING_DATASOURCE_PASSWORD` | _(empty)_ | DB password |
+| `SERVER_PORT` | `8080` | API port |
+| `WORKER_PORT` | `8081` | Worker actuator port |
+
+## Extensibility
+
+- Swap backends by providing alternate Spring `@Service` beans for `PaymentService`, `InventoryService`, or `DeliveryService`.
+- Activities depend only on interfaces from `order-common`.
+- Workflow returns structured `OrderFulfillmentResult` and exposes `getStatus` queries / approval signals.
+
+## Tests & CI
+
+```bash
 make test
-
-# Run with Maven directly
-mvn test
-
-# Run specific test
-mvn test -Dtest=OrderFulfillWorkflowTest
 ```
 
-### Custom Order Processing
+GitHub Actions (`.github/workflows/ci.yml`) runs `mvn verify` on Java 21 with JaCoCo reports.
 
-**Process Multiple Orders:**
-```bash
-make run-with-args ARGS="--numOrders 10 --invalidPercentage 20"
-```
-
-**Command Line Options:**
-- `--numOrders, -n`: Number of orders to process (default: 1)
-- `--invalidPercentage, -i`: Percentage of orders to make invalid (0-100, default: 0)
-- `--help, -h`: Display help message
-
-## 🏭 Business Logic
-
-### Activities
-
-1. **Payment Processing** (`processPayment`)
-   - Validates credit card information
-   - Handles expired cards with custom exceptions
-   - Simulates payment gateway interaction
-
-2. **Inventory Reservation** (`reserveInventory`)
-   - Checks stock availability
-   - Reserves items for the order
-   - Handles inventory service downtime
-
-3. **Order Delivery** (`deliverOrder`)
-   - Manages shipping logistics
-   - Tracks delivery status
-
-4. **Approval Check** (`requireApproval`)
-   - Reviews high-value orders (>$10,000)
-   - Implements approval workflows
-
-### Error Handling
-
-- **Retry Policies**: Automatic retries for transient failures
-- **Custom Exceptions**: `CreditCardExpiredException` with no retry policy
-- **Circuit Breakers**: Handles downstream service failures
-- **Timeouts**: Configurable activity timeouts
-
-### Data Models
-
-**Order Structure:**
-```json
-{
-  "items": [
-    {
-      "itemName": "Low Top Sneaker (Men)",
-      "itemPrice": 67.00,
-      "quantity": 1
-    }
-  ],
-  "payment": {
-    "creditCard": {
-      "number": "1234 5678 1234 5678",
-      "expiration": "12/25"
-    }
-  }
-}
-```
-
-## 🔧 Configuration
-
-### Environment Variables
-
-- `TEMPORAL_ADDRESS`: Temporal server address (default: localhost:7233)
-- `TEMPORAL_NAMESPACE`: Temporal namespace (default: default)
-
-### Application Properties
-
-Key configurations in `pom.xml`:
-- Java version: 24
-- Temporal SDK: 1.25.2
-- Jackson: 2.18.2
-- Logging: SLF4J + Logback
-
-## 📊 Monitoring
-
-### Temporal Web UI
-
-Access the Temporal Web UI at: http://localhost:8233
-
-Features:
-- Workflow execution history
-- Activity logs and metrics
-- Error tracking and debugging
-- Performance monitoring
-
-### Application Logs
-
-Logs are configured via `logback.xml` and output to console by default.
+## Build artifacts
 
 ```bash
-# View logs in real-time (if file logging is enabled)
-make logs
-```
-
-## 🧪 Testing
-
-The application includes comprehensive tests:
-
-- **Unit Tests**: Individual component testing
-- **Integration Tests**: Workflow execution testing
-- **Mock Testing**: Isolated activity testing
-- **Edge Cases**: Error conditions and boundary testing
-
-### Test Coverage
-
-- Order calculation and validation
-- Payment processing (success/failure scenarios)
-- Inventory management
-- Credit card validation and masking
-- High-value order approval logic
-
-## 🚀 Production Deployment
-
-### Prerequisites for Production
-
-1. **Temporal Cloud** or self-hosted Temporal cluster
-2. **Database**: PostgreSQL/MySQL for Temporal persistence
-3. **Message Queue**: Kafka for high-throughput scenarios
-4. **Monitoring**: Prometheus/Grafana for metrics
-
-### Build for Production
-
-```bash
-# Package application
 make package
-
-# The JAR will be available in target/
-java -jar target/temporal-order-fulfill-0.1.0.jar
+java -jar order-api/target/order-api-1.0.0.jar
+java -jar order-worker/target/order-worker-1.0.0.jar
 ```
 
-### Docker Deployment
+## License
 
-```dockerfile
-FROM openjdk:24-jdk-slim
-COPY target/temporal-order-fulfill-0.1.0.jar app.jar
-ENTRYPOINT ["java", "-jar", "/app.jar"]
-```
-
-## 🔒 Security Considerations
-
-- Credit card numbers are masked in logs
-- Secure credential handling for payment gateways
-- Network security for Temporal communication
-- Input validation for all order data
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Run tests: `make test`
-4. Format code: `make format`
-5. Submit a pull request
-
-## 📚 Additional Resources
-
-- [Temporal Documentation](https://docs.temporal.io/)
-- [Java SDK Guide](https://docs.temporal.io/dev-guide/java)
-- [Workflow Patterns](https://docs.temporal.io/encyclopedia/workflow-patterns)
-- [Best Practices](https://docs.temporal.io/dev-guide/best-practices)
-
-## 📄 License
-
-This project is licensed under the terms specified in the [LICENSE](LICENSE) file.
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**1. Temporal Server Not Running**
-```bash
-# Check if Temporal is running
-docker ps | grep temporal
-# or
-curl -I http://localhost:8233
-```
-
-**2. Java Version Issues**
-```bash
-# Check Java version
-make java-version
-# Ensure Java 21+ is installed
-```
-
-**3. Maven Build Issues**
-```bash
-# Clean and rebuild
-make clean
-make build
-```
-
-**4. Port Conflicts**
-```bash
-# Check if ports 7233 or 8233 are in use
-lsof -i :7233
-lsof -i :8233
-```
-
-For additional support, please check the [issues](../../issues) section or create a new issue.
+MIT

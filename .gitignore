@@ -111,9 +111,7 @@ $RECYCLE.BIN/
 # Temporal specific
 # ===========================================
 
-# Temporal server data (if running locally)
-temporal-data/
-.temporal/
+.data/
 
 # Docker related (if using Docker for Temporal)
 docker-compose.override.yml

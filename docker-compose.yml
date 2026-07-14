@@ -1,0 +1,80 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: order
+      POSTGRES_PASSWORD: order
+      POSTGRES_DB: orderfulfill
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U order -d orderfulfill"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    ports:
+      - "7233:7233"
+
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    ports:
+      - "8233:8080"
+
+  order-worker:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: OrderFulfillTaskQueue
+      APPROVAL_THRESHOLD: "10000"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orderfulfill
+      SPRING_DATASOURCE_USERNAME: order
+      SPRING_DATASOURCE_PASSWORD: order
+      SPRING_DATASOURCE_DRIVER: org.postgresql.Driver
+      WORKER_PORT: "8081"
+    ports:
+      - "8081:8081"
+
+  order-api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+      order-worker:
+        condition: service_started
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      TEMPORAL_TASK_QUEUE: OrderFulfillTaskQueue
+      APPROVAL_THRESHOLD: "10000"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/orderfulfill
+      SPRING_DATASOURCE_USERNAME: order
+      SPRING_DATASOURCE_PASSWORD: order
+      SPRING_DATASOURCE_DRIVER: org.postgresql.Driver
+      SERVER_PORT: "8080"
+    ports:
+      - "8080:8080"
+
+volumes:
+  postgres_data:
